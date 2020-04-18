@@ -1020,10 +1020,10 @@ void UJavascriptEditorLibrary::CompileBlueprint(UBlueprint* Blueprint)
 
 bool UJavascriptEditorLibrary::OpenEditorForAsset(UObject* Asset)
 {
-	if (auto* SubSystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+	/*if (auto* SubSystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
 	{
 		return SubSystem->OpenEditorForAsset(Asset);
-	}
+	}*/
 	return false;
 }
 
@@ -1038,10 +1038,10 @@ void UJavascriptEditorLibrary::OpenEditorForAssetByPath(const FString& AssetPath
 		UObject* Object = FindObject<UObject>(Package, *ObjectName);
 		if (Object != NULL)
 		{
-			if (auto* SubSystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+			/*if (auto* SubSystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
 			{
 				SubSystem->OpenEditorForAsset(Object);
-			}
+			}*/
 		}
 	}
 }
@@ -1370,7 +1370,7 @@ void UJavascriptEditorLibrary::AddRichCurve(UCurveTable* InCurveTable, const FNa
 
 void UJavascriptEditorLibrary::NotifyUpdateCurveTable(UCurveTable* InCurveTable)
 {
-	InCurveTable->OnCurveTableChanged().Broadcast();
+	//InCurveTable->OnCurveTableChanged().Broadcast();
 }
 
 bool UJavascriptEditorLibrary::HasMetaData(UField* Field, const FString& Key)

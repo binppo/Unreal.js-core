@@ -57,11 +57,11 @@ OP_REFLECT(OnActionAxisMappingsChanged)\
 OP_REFLECT(OnAddLevelToWorld)
 
 // UEditorEngine::OnObjectReimported is integrated with UImportSubsystem::OnAssetReimport
-#define DO_REFLECT_IMPORT_SUBSYS() \
-OP_REFLECT_IMPORT_SUBSYS(OnAssetPreImport)\
-OP_REFLECT_IMPORT_SUBSYS(OnAssetPostImport)\
-OP_REFLECT_IMPORT_SUBSYS(OnAssetReimport)\
-OP_REFLECT_IMPORT_SUBSYS_FORWARD(OnAssetReimport, OnObjectReimported)
+//#define DO_REFLECT_IMPORT_SUBSYS() \
+//OP_REFLECT_IMPORT_SUBSYS(OnAssetPreImport)\
+//OP_REFLECT_IMPORT_SUBSYS(OnAssetPostImport)\
+//OP_REFLECT_IMPORT_SUBSYS(OnAssetReimport)\
+//OP_REFLECT_IMPORT_SUBSYS_FORWARD(OnAssetReimport, OnObjectReimported)
 
 #define DO_REFLECT_ASSETREGISTRY() \
 OP_REFLECT_ASSETREGISTRY(OnPathAdded)\
@@ -99,15 +99,15 @@ void UJavascriptEditorGlobalDelegates::Bind(FString Key)
 
 	auto& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
 #define OP_REFLECT(x) else if (Key == #x) { Handle = FEditorDelegates::x.AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
-#define OP_REFLECT_IMPORT_SUBSYS(x) else if (Key == #x) { Handle = GEditor->GetEditorSubsystem<UImportSubsystem>()->x.AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
-#define OP_REFLECT_IMPORT_SUBSYS_FORWARD(DelegateName, HandlerFunc) else if (Key == #HandlerFunc) { Handle = GEditor->GetEditorSubsystem<UImportSubsystem>()->DelegateName.AddUObject(this, &UJavascriptEditorGlobalDelegates::HandlerFunc); }
+//#define OP_REFLECT_IMPORT_SUBSYS(x) else if (Key == #x) { Handle = GEditor->GetEditorSubsystem<UImportSubsystem>()->x.AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
+//#define OP_REFLECT_IMPORT_SUBSYS_FORWARD(DelegateName, HandlerFunc) else if (Key == #HandlerFunc) { Handle = GEditor->GetEditorSubsystem<UImportSubsystem>()->DelegateName.AddUObject(this, &UJavascriptEditorGlobalDelegates::HandlerFunc); }
 #define OP_REFLECT_ASSETREGISTRY(x) else if (Key == #x) { Handle = AssetRegistry.x().AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
 #define OP_REFLECT_EDITORENGINE(x) else if (Key == #x) { Handle = Cast<UEditorEngine>(GEngine)->x().AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
 #define OP_REFLECT_SUPPORT(x) else if (Key == #x) { Handle = FEditorSupportDelegates::x.AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
 #define OP_REFLECT_GAME(x) else if (Key == #x) { Handle = FGameDelegates::Get().Get##x().AddUObject(this, &UJavascriptEditorGlobalDelegates::x); }
 	if (false) {}
 		DO_REFLECT()
-		DO_REFLECT_IMPORT_SUBSYS()
+		//DO_REFLECT_IMPORT_SUBSYS()
 		DO_REFLECT_ASSETREGISTRY()
 		DO_REFLECT_EDITORENGINE()
 		DO_REFLECT_SUPPORT()
@@ -148,7 +148,7 @@ void UJavascriptEditorGlobalDelegates::Unbind(FString Key)
 #define OP_REFLECT_GAME(x) else if (Key == #x) { FGameDelegates::Get().Get##x().Remove(Handle); }
 	if (false) {}
 		DO_REFLECT()
-		DO_REFLECT_IMPORT_SUBSYS()
+		//DO_REFLECT_IMPORT_SUBSYS()
 		DO_REFLECT_ASSETREGISTRY()
 		DO_REFLECT_EDITORENGINE()
 		DO_REFLECT_SUPPORT()

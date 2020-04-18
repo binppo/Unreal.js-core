@@ -89,8 +89,8 @@ public class JavascriptEditor : ModuleRules
                         "ImageWrapper",
                         "RenderCore",
                         "RHI",
-				        "DesktopPlatform",
-                        "ToolMenus"
+				        "DesktopPlatform"/*,
+                        "ToolMenus"*/
                     }
             );
         }

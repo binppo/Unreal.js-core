@@ -5,7 +5,7 @@
 #include "Framework/Commands/GenericCommands.h"
 #include "JavascriptUICommands.h"
 #include "../../Launch/Resources/Version.h"
-#include "ToolMenu.h"
+//#include "ToolMenu.h"
 
 FJavascriptUICommandList UJavascriptMenuLibrary::CreateUICommandList()
 {
@@ -58,10 +58,10 @@ void UJavascriptMenuLibrary::BeginSection(FJavascriptMenuBuilder& Builder, FName
 	{
 		Builder.Menu->BeginSection(InExtensionHook, MenuHeadingText);
 	}
-	else if (Builder.ToolMenu)
+	/*else if (Builder.ToolMenu)
 	{
 		Builder.ToolMenu->AddSection(InExtensionHook, MenuHeadingText);
-	}
+	}*/
 }
 
 void UJavascriptMenuLibrary::EndSection(FJavascriptMenuBuilder& Builder)
@@ -86,11 +86,11 @@ void UJavascriptMenuLibrary::AddSeparator(FJavascriptMenuBuilder& Builder)
 	{
 		Builder.Menu->AddMenuSeparator();
 	}
-	else if (Builder.ToolMenu)
+	/*else if (Builder.ToolMenu)
 	{
 		FToolMenuSection& Section = Builder.ToolMenu->Sections.Num() > 0 ? Builder.ToolMenu->Sections.Top() : Builder.ToolMenu->AddSection(FName());
 		Section.AddMenuSeparator(FName());
-	}
+	}*/
 }
 
 void UJavascriptMenuLibrary::AddToolBarButton(FJavascriptMenuBuilder& Builder, FJavascriptUICommandInfo CommandInfo)
@@ -103,11 +103,11 @@ void UJavascriptMenuLibrary::AddToolBarButton(FJavascriptMenuBuilder& Builder, F
 	{
 		Builder.Menu->AddMenuEntry(CommandInfo.Handle);
 	}
-	else if (Builder.ToolMenu && CommandInfo.Handle.IsValid())
+	/*else if (Builder.ToolMenu && CommandInfo.Handle.IsValid())
 	{
 		FToolMenuSection& Section = Builder.ToolMenu->Sections.Num() > 0 ? Builder.ToolMenu->Sections.Top() : Builder.ToolMenu->AddSection(FName());
 		Section.AddMenuEntry(CommandInfo.Handle);
-	}
+	}*/
 }
 
 void UJavascriptMenuLibrary::AddToolBarButtonByContext(FJavascriptMenuBuilder& Builder, UJavascriptToolbarButtonContext* Context, UObject* EditingObject)
@@ -166,7 +166,7 @@ void UJavascriptMenuLibrary::AddMenuEntry(FJavascriptMenuBuilder& Builder, UJava
 			CommandType
 		);
 	}
-	else if (Builder.ToolMenu)
+	/*else if (Builder.ToolMenu)
 	{
 		FUIAction DefaultAction;
 		DefaultAction.CanExecuteAction = FCanExecuteAction::CreateUObject(Object, &UJavascriptMenuContext::Public_CanExecute);
@@ -186,7 +186,7 @@ void UJavascriptMenuLibrary::AddMenuEntry(FJavascriptMenuBuilder& Builder, UJava
 			DefaultAction,
 			CommandType
 		);
-	}
+	}*/
 }
 
 void UJavascriptMenuLibrary::AddSubMenu(FJavascriptMenuBuilder& Builder, const FText& Label, const FText& ToolTip, const bool bInOpenSubMenuOnClick, FJavascriptFunction Function)
@@ -207,7 +207,7 @@ void UJavascriptMenuLibrary::AddSubMenu(FJavascriptMenuBuilder& Builder, const F
 			FSlateIcon()
 		);
 	}
-	else if (Builder.ToolMenu)
+	/*else if (Builder.ToolMenu)
 	{
 		TSharedPtr<FJavascriptFunction> Copy(new FJavascriptFunction);
 		*(Copy.Get()) = Function;
@@ -228,7 +228,7 @@ void UJavascriptMenuLibrary::AddSubMenu(FJavascriptMenuBuilder& Builder, const F
 			bInOpenSubMenuOnClick,
 			FSlateIcon()
 		);
-	}
+	}*/
 }
 
 void UJavascriptMenuLibrary::AddMenuByCommands(FJavascriptMenuBuilder& Builder, UJavascriptUICommands* UICommands)
@@ -240,14 +240,14 @@ void UJavascriptMenuLibrary::AddMenuByCommands(FJavascriptMenuBuilder& Builder, 
 			Builder.Menu->AddMenuEntry(CommandInfo.Handle);
 		}
 	}
-	else if (Builder.ToolMenu && UICommands)
+	/*else if (Builder.ToolMenu && UICommands)
 	{
 		for (FJavascriptUICommandInfo CommandInfo : UICommands->CommandInfos)
 		{
 			FToolMenuSection& Section = Builder.ToolMenu->Sections.Num() > 0 ? Builder.ToolMenu->Sections.Top() : Builder.ToolMenu->AddSection(FName());
 			Section.AddMenuEntry(CommandInfo.Handle);
 		}
-	}
+	}*/
 }
 
 void UJavascriptMenuLibrary::AddWidget(FJavascriptMenuBuilder& Builder, UWidget* Widget, const FText& Label, bool bNoIndent, FName InTutorialHighlightName, bool bSearchable)

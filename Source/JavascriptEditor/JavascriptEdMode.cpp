@@ -372,7 +372,7 @@ public:
 		return MakeShareable(new FJavascriptEdModeInstance(Parent));
 	}
 
-	virtual UEdMode* CreateScriptableMode() const override
+	/*virtual UEdMode *CreateScriptableMode() const override
 	{
 		return nullptr;
 	}
@@ -380,7 +380,7 @@ public:
 	virtual bool ForScriptableMode() const override
 	{
 		return false;
-	}
+	}*/
 
 	UJavascriptEdMode* Parent;
 };

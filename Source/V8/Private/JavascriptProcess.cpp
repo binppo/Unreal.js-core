@@ -158,7 +158,9 @@ void UJavascriptProcess::SetEnvironmentVar(const FString& VarName, const FString
 
 FString UJavascriptProcess::GetEnvironmentVar(const FString& VarName)
 {
-	return FPlatformMisc::GetEnvironmentVariable(*VarName);
+	TCHAR Result[4096];
+	FPlatformMisc::GetEnvironmentVariable(*VarName, Result, ARRAY_COUNT(Result));
+	return Result;
 }
 
 void UJavascriptProcess::LaunchURL(const FString& URL, const FString& Parms, FString& Error)

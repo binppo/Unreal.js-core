@@ -42,6 +42,19 @@ THIRD_PARTY_INCLUDES_END
 
 using namespace v8;
 
+// HACK FOR ACCESS PRIVATE MEMBERS
+class hack_private_key {};
+static UClass* PlaceholderUClass;
+
+template<>
+FObjectInitializer const& FObjectInitializer::SetDefaultSubobjectClass<hack_private_key>(TCHAR const*SubobjectName) const
+{
+	AssertIfSubobjectSetupIsNotAllowed(SubobjectName);
+	ComponentOverrides.Add(SubobjectName, PlaceholderUClass, *this);
+	return *this;
+}
+// END OF HACKING
+
 struct FPrivateJavascriptFunction
 {
 	~FPrivateJavascriptFunction()
@@ -323,7 +336,7 @@ public:
 			}
 		};
 
-		for (int32 Index = 0; Index < UE_ARRAY_COUNT(Counter); ++Index)
+		for (int32 Index = 0; Index < ARRAY_COUNT(Counter); ++Index)
 		{
 			if (type & (1 << Index))
 			{
@@ -1870,7 +1883,9 @@ public:
 
 			auto Context = Class->JavascriptContext.Pin();
 			auto Name = StringFromV8(isolate, info[0]);
-			ObjectInitializer->SetDefaultSubobjectClass(*Name, ClassToExport);
+			PlaceholderUClass = ClassToExport;
+			ObjectInitializer->SetDefaultSubobjectClass<hack_private_key>(*Name);
+			PlaceholderUClass = nullptr;
 		};
 
 		Template->Set(I.Keyword("SetDefaultSubobjectClass"), I.FunctionTemplate(fn, ClassToExport));

@@ -141,7 +141,7 @@ bool UPropertyEditor::NativeIsPropertyReadOnly(const FPropertyAndParent& InPrope
 	const TArray<FString>* PropertyPaths = PropertyPathMap.Find(&InPropertyAndParent.Property);
 
 	return IsPropertyReadOnly(InPropertyAndParent.Property.GetName(),
-		(InPropertyAndParent.ParentProperties.Num() > 0) ? InPropertyAndParent.ParentProperties[0]->GetName() : EmptyString,
+		/*(InPropertyAndParent.ParentProperties.Num() > 0) ? InPropertyAndParent.ParentProperties[0]->GetName() : */EmptyString,
 		(PropertyPaths != nullptr) ? *PropertyPaths : EmptyStringArray);
 }
 
@@ -150,7 +150,7 @@ bool UPropertyEditor::NativeIsPropertyVisible(const FPropertyAndParent& InProper
 	const TArray<FString>* PropertyPaths = PropertyPathMap.Find(&InPropertyAndParent.Property);
 
 	return IsPropertyVisible(InPropertyAndParent.Property.GetName(),
-		(InPropertyAndParent.ParentProperties.Num() > 0) ? InPropertyAndParent.ParentProperties[0]->GetName() : EmptyString,
+		/*(InPropertyAndParent.ParentProperties.Num() > 0) ? InPropertyAndParent.ParentProperties[0]->GetName() : */EmptyString,
 		(PropertyPaths != nullptr) ? *PropertyPaths : EmptyStringArray);
 }
 

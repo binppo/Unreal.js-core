@@ -37,7 +37,7 @@ public class V8 : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         bLegacyPublicIncludePaths = false;
-        ShadowVariableWarningLevel = WarningLevel.Error;
+        //ShadowVariableWarningLevel = WarningLevel.Error;
         PrivateIncludePaths.AddRange(new string[]
         {
             Path.Combine(ThirdPartyPath, "v8", "include")
@@ -102,7 +102,8 @@ public class V8 : ModuleRules
     {
         int[] v8_version = GetV8Version();
         bool ShouldLink_libsampler = !(v8_version[0] == 5 && v8_version[1] < 3);
-        bool ShouldLink_lib_v8_compiler = (v8_version[0] > 6 && v8_version[1] > 6);
+        //bool ShouldLink_lib_v8_compiler = (v8_version[0] > 6 && v8_version[1] > 6);
+        bool ShouldLink_lib_v8_compiler = true;
         if ((Target.Platform == UnrealTargetPlatform.Win64) || (Target.Platform == UnrealTargetPlatform.Win32))
         {
             string LibrariesPath = Path.Combine(ThirdPartyPath, "v8", "lib");
