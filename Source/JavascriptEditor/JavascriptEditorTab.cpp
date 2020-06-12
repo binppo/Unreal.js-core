@@ -48,7 +48,7 @@ void UJavascriptEditorTab::Discard()
 void UJavascriptEditorTab::ForceCommit()
 {
 	const TSharedRef<FGlobalTabmanager>& GlobalTabManager = FGlobalTabmanager::Get();
-	if (bIsNomad/* && GlobalTabManager->HasTabSpawner(TabId)*/)
+	if (bIsNomad && GlobalTabManager->HasTabSpawner(TabId))
 	{
 		GlobalTabManager->UnregisterNomadTabSpawner(TabId);
 	}

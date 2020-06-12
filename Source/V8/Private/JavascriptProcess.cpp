@@ -74,6 +74,11 @@ FString UJavascriptProcess::GetApplicationName(int32 ProcessId)
 	return FPlatformProcess::GetApplicationName(ProcessId);
 }
 
+int32 UJavascriptProcess::GetCurrentProcessId()
+{
+	return (int32)FPlatformProcess::GetCurrentProcessId();
+}
+
 bool UJavascriptProcess::IsApplicationRunning_PID(int32 ProcessId)
 {
 	return FPlatformProcess::IsApplicationRunning(ProcessId);
@@ -158,9 +163,7 @@ void UJavascriptProcess::SetEnvironmentVar(const FString& VarName, const FString
 
 FString UJavascriptProcess::GetEnvironmentVar(const FString& VarName)
 {
-	TCHAR Result[4096];
-	FPlatformMisc::GetEnvironmentVariable(*VarName, Result, ARRAY_COUNT(Result));
-	return Result;
+	return FPlatformMisc::GetEnvironmentVariable(*VarName);
 }
 
 void UJavascriptProcess::LaunchURL(const FString& URL, const FString& Parms, FString& Error)

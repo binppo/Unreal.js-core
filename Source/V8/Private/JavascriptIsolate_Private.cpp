@@ -42,19 +42,6 @@ THIRD_PARTY_INCLUDES_END
 
 using namespace v8;
 
-// HACK FOR ACCESS PRIVATE MEMBERS
-class hack_private_key {};
-static UClass* PlaceholderUClass;
-
-template<>
-FObjectInitializer const& FObjectInitializer::SetDefaultSubobjectClass<hack_private_key>(TCHAR const*SubobjectName) const
-{
-	AssertIfSubobjectSetupIsNotAllowed(SubobjectName);
-	ComponentOverrides.Add(SubobjectName, PlaceholderUClass, *this);
-	return *this;
-}
-// END OF HACKING
-
 struct FPrivateJavascriptFunction
 {
 	~FPrivateJavascriptFunction()
@@ -157,21 +144,21 @@ public:
 			return UObjectFromV8(context, self);
 		}
 
-		static Local<Value> Get(Isolate* isolate, Local<Object> self, UProperty* Property, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
+		static Local<Value> Get(Isolate* isolate, Local<Object> self, FProperty* Property, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
 		{
 			auto Object = UObjectFromV8(isolate->GetCurrentContext(), self);
 
 			if (IsValid(Object))
 			{
 				FScopeCycleCounterUObject ContextScope(Object);
-				FScopeCycleCounterUObject PropertyScope(Property);
+
 				SCOPE_CYCLE_COUNTER(STAT_JavascriptPropertyGet);
 
-				if (auto p = Cast<UMulticastDelegateProperty>(Property))
+				if (auto p = CastField<FMulticastDelegateProperty>(Property))
 				{
 					return GetSelf(isolate)->Delegates->GetProxy(self, Object, p);
 				}
-				else if (auto p = Cast<UDelegateProperty>(Property))
+				else if (auto p = CastField<FDelegateProperty>(Property))
 				{
 					return GetSelf(isolate)->Delegates->GetProxy(self, Object, p);
 				}
@@ -187,7 +174,7 @@ public:
 		}
 
 		//@TODO : Property-type 'routing' is not necessary!
-		static void Set(Isolate* isolate, Local<Object> self, UProperty* Property, Local<Value> value, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
+		static void Set(Isolate* isolate, Local<Object> self, FProperty* Property, Local<Value> value, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
 		{
 			FIsolateHelper I(isolate);
 
@@ -239,17 +226,17 @@ public:
 			if (IsValid(Object))
 			{
 				FScopeCycleCounterUObject ContextScope(Object);
-				FScopeCycleCounterUObject PropertyScope(Property);
+
 				SCOPE_CYCLE_COUNTER(STAT_JavascriptPropertySet);
 
 				// Multicast delegate
-				if (auto p = Cast<UMulticastDelegateProperty>(Property))
+				if (auto p = CastField<FMulticastDelegateProperty>(Property))
 				{
 					auto proxy = GetSelf(isolate)->Delegates->GetProxy(self, Object, p);
 					SetDelegate(proxy);
 				}
 				// delegate
-				else if (auto p = Cast<UDelegateProperty>(Property))
+				else if (auto p = CastField<FDelegateProperty>(Property))
 				{
 					auto proxy = GetSelf(isolate)->Delegates->GetProxy(self, Object, p);
 					SetDelegate(proxy);
@@ -269,7 +256,7 @@ public:
 			return FStructMemoryInstance::FromV8(context, self)->GetMemory();
 		}
 
-		static Local<Value> Get(Isolate* isolate, Local<Object> self, UProperty* Property, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
+		static Local<Value> Get(Isolate* isolate, Local<Object> self, FProperty* Property, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
 		{
 			auto Instance = FStructMemoryInstance::FromV8(isolate->GetCurrentContext(), self);
 			if (Instance)
@@ -282,7 +269,7 @@ public:
 			}
 		}
 
-		static void Set(Isolate* isolate, Local<Object> self, UProperty* Property, Local<Value> value, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
+		static void Set(Isolate* isolate, Local<Object> self, FProperty* Property, Local<Value> value, const FPropertyAccessorFlags& Flags = FPropertyAccessorFlags())
 		{
 			FIsolateHelper I(isolate);
 
@@ -336,7 +323,7 @@ public:
 			}
 		};
 
-		for (int32 Index = 0; Index < ARRAY_COUNT(Counter); ++Index)
+		for (int32 Index = 0; Index < UE_ARRAY_COUNT(Counter); ++Index)
 		{
 			if (type & (1 << Index))
 			{
@@ -372,8 +359,27 @@ public:
 
 		InitializeGlobalTemplate();
 
+		OnWorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddRaw(this, &FJavascriptIsolateImplementation::OnWorldCleanup);
 		TickDelegate = FTickerDelegate::CreateRaw(this, &FJavascriptIsolateImplementation::HandleTicker);
 		TickHandle = FTicker::GetCoreTicker().AddTicker(TickDelegate);
+	}
+
+	void OnWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources)
+	{
+		if (World->IsGameWorld())
+			return;
+
+		for (auto It = ClassToFunctionTemplateMap.CreateIterator(); It; ++It)
+		{
+			UClass* Class = It.Key();
+			//UE_LOG(Javascript, Log, TEXT("JavascriptIsolate referencing %s / %s %s (gen by %s %s)"), *(Class->GetOuter()->GetName()), *(Class->GetClass()->GetName()), *(Class->GetName()), Class->ClassGeneratedBy ? *(Class->ClassGeneratedBy->GetClass()->GetName()) : TEXT("none"), Class->ClassGeneratedBy ? *(Class->ClassGeneratedBy->GetName()) : TEXT("none"));
+			int ValidIndex = IsExcludeGCUClassTarget(Class);
+
+			if (ValidIndex == 0)
+			{
+				It.RemoveCurrent();
+			}
+		}
 	}
 
 	void InitializeGlobalTemplate()
@@ -424,6 +430,7 @@ public:
 		Delegates = nullptr;
 
 		FTicker::GetCoreTicker().RemoveTicker(TickHandle);
+		FWorldDelegates::OnWorldCleanup.Remove(OnWorldCleanupHandle);
 		v8::debug::SetConsoleDelegate(isolate_, nullptr);
 
 		isolate_->Dispose();
@@ -461,7 +468,7 @@ public:
 				for (TFieldIterator<UFunction> FuncIt(Class, EFieldIteratorFlags::ExcludeSuper); FuncIt; ++FuncIt)
 				{
 					auto Function = *FuncIt;
-					TFieldIterator<UProperty> It(Function);
+					TFieldIterator<FProperty> It(Function);
 
 					// It should be a static function
 					if ((Function->FunctionFlags & FUNC_Static) && It)
@@ -470,7 +477,7 @@ public:
 						if ((It->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == CPF_Parm)
 						{
 							// The first argument should be type of object
-							if (auto p = Cast<UObjectPropertyBase>(*It))
+							if (auto p = CastField<FObjectPropertyBase>(*It))
 							{
 								auto TargetClass = p->PropertyClass;
 
@@ -483,7 +490,7 @@ public:
 								BlueprintFunctionLibraryMapping.Add(TargetClass, Function);
 								continue;
 							}
-							else if (auto p = Cast<UStructProperty>(*It))
+							else if (auto p = CastField<FStructProperty>(*It))
 							{
 								BlueprintFunctionLibraryMapping.Add(p->Struct, Function);
 								continue;
@@ -495,7 +502,7 @@ public:
 						{
 							if ((It2->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == (CPF_Parm | CPF_ReturnParm))
 							{
-								if (auto p = Cast<UStructProperty>(*It2))
+								if (auto p = CastField<FStructProperty>(*It2))
 								{
 									BlueprintFunctionLibraryFactoryMapping.Add(p->Struct, Function);
 									break;
@@ -516,7 +523,14 @@ public:
 		{
 			UClass* Class = It.Key();
 			//UE_LOG(Javascript, Log, TEXT("JavascriptIsolate referencing %s / %s %s (gen by %s %s)"), *(Class->GetOuter()->GetName()), *(Class->GetClass()->GetName()), *(Class->GetName()), Class->ClassGeneratedBy ? *(Class->ClassGeneratedBy->GetClass()->GetName()) : TEXT("none"), Class->ClassGeneratedBy ? *(Class->ClassGeneratedBy->GetName()) : TEXT("none"));
-			Collector.AddReferencedObject(Class, InThis);
+			if (!::IsValid(Class) || !Class->IsValidLowLevel())
+			{
+				It.RemoveCurrent();
+			}
+			else
+			{
+				Collector.AddReferencedObject(Class, InThis);
+			}
 		}
 
 		// All structs
@@ -526,7 +540,7 @@ public:
 		}
 	}
 
-	Local<Value> InternalReadProperty(UProperty* Property, uint8* Buffer, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
+	Local<Value> InternalReadProperty(FProperty* Property, uint8* Buffer, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
 	{
 		FIsolateHelper I(isolate_);
 
@@ -540,7 +554,7 @@ public:
 		const FString& BitmaskEnumName = Property->GetMetaData(FJavascriptIsolateConstant::MD_BitmaskEnum);
 		if (!BitmaskEnumName.IsEmpty())
 		{
-			if (auto p = Cast<UNumericProperty>(Property))
+			if (auto p = CastField<FNumericProperty>(Property))
 			{
 				if (p->IsInteger())
 				{
@@ -566,29 +580,29 @@ public:
 #else
 		if (false) {}
 #endif
-		else if (auto p = Cast<UIntProperty>(Property))
+		else if (auto p = CastField<FIntProperty>(Property))
 		{
 			return Int32::New(isolate_, p->GetPropertyValue_InContainer(Buffer));
 		}
-		else if (auto p = Cast<UFloatProperty>(Property))
+		else if (auto p = CastField<FFloatProperty>(Property))
 		{
 			return Number::New(isolate_, p->GetPropertyValue_InContainer(Buffer));
 		}
-		else if (auto p = Cast<UBoolProperty>(Property))
+		else if (auto p = CastField<FBoolProperty>(Property))
 		{
             return v8::Boolean::New(isolate_, p->GetPropertyValue_InContainer(Buffer));
 		}
-		else if (auto p = Cast<UNameProperty>(Property))
+		else if (auto p = CastField<FNameProperty>(Property))
 		{
 			auto name = p->GetPropertyValue_InContainer(Buffer);
 			return I.Keyword(name.ToString());
 		}
-		else if (auto p = Cast<UStrProperty>(Property))
+		else if (auto p = CastField<FStrProperty>(Property))
 		{
 			const FString& Data = p->GetPropertyValue_InContainer(Buffer);
 			return V8_String(isolate_, Data);
 		}
-		else if (auto p = Cast<UTextProperty>(Property))
+		else if (auto p = CastField<FTextProperty>(Property))
 		{
 			const FText& Data = p->GetPropertyValue_InContainer(Buffer);
 			if (!Flags.Alternative)
@@ -614,7 +628,7 @@ public:
 				return ExportStructInstance(FJavascriptText::StaticStruct(), (uint8*)Memory->GetMemory(), FNoPropertyOwner());
 			}
 		}
-		else if (auto p = Cast<UClassProperty>(Property))
+		else if (auto p = CastField<FClassProperty>(Property))
 		{
 			auto Class = Cast<UClass>(p->GetPropertyValue_InContainer(Buffer));
 
@@ -627,7 +641,7 @@ public:
 				return Null(isolate_);
 			}
 		}
-		else if (auto p = Cast<UStructProperty>(Property))
+		else if (auto p = CastField<FStructProperty>(Property))
 		{
 			if (auto ScriptStruct = Cast<UScriptStruct>(p->Struct))
 			{
@@ -640,7 +654,7 @@ public:
 				return v8::Undefined(isolate_);
 			}
 		}
-		else if (auto p = Cast<UArrayProperty>(Property))
+		else if (auto p = CastField<FArrayProperty>(Property))
 		{
 			FScriptArrayHelper_InContainer helper(p, Buffer);
 			auto len = (uint32_t)(helper.Num());
@@ -649,7 +663,7 @@ public:
 
 			auto Inner = p->Inner;
 
-			if (Inner->IsA(UStructProperty::StaticClass()) && (Flags.Alternative == false))
+			if (Inner->IsA(FStructProperty::StaticClass()) && (Flags.Alternative == false))
 			{
 				uint8* ElementBuffer = (uint8*)FMemory_Alloca(Inner->GetSize());
 				for (decltype(len) Index = 0; Index < len; ++Index)
@@ -670,7 +684,7 @@ public:
 
 			return arr;
 		}
-		else if (auto p = Cast<USoftObjectProperty>(Property))
+		else if (auto p = CastField<FSoftObjectProperty>(Property))
 		{
 			// string only
 // 			auto* Data = p->GetObjectPropertyValue_InContainer(Buffer);
@@ -684,11 +698,11 @@ public:
 				return V8_String(isolate_, Value.ToString());
 // 			}
 		}
-		else if (auto p = Cast<UObjectPropertyBase>(Property))
+		else if (auto p = CastField<FObjectPropertyBase>(Property))
 		{
 			return ExportObject(p->GetObjectPropertyValue_InContainer(Buffer));
 		}
-		else if (auto p = Cast<UByteProperty>(Property))
+		else if (auto p = CastField<FByteProperty>(Property))
 		{
 			auto Value = p->GetPropertyValue_InContainer(Buffer);
 
@@ -701,12 +715,12 @@ public:
 				return Int32::New(isolate_, Value);
 			}
 		}
-		else if (auto p = Cast<UEnumProperty>(Property))
+		else if (auto p = CastField<FEnumProperty>(Property))
 		{
 			int32 Value = p->GetUnderlyingProperty()->GetValueTypeHash(Buffer);
 			return I.Keyword(p->GetEnum()->GetNameStringByIndex(Value));
 		}
-		else if (auto p = Cast<USetProperty>(Property))
+		else if (auto p = CastField<FSetProperty>(Property))
 		{
 			FScriptSetHelper_InContainer SetHelper(p, Buffer);
 
@@ -723,7 +737,7 @@ public:
 
 			return Out;
 		}
-		else if (auto p = Cast<UMapProperty>(Property))
+		else if (auto p = CastField<FMapProperty>(Property))
 		{
 			FScriptMapHelper_InContainer MapHelper(p, Buffer);
 
@@ -764,7 +778,7 @@ public:
 
 		auto len = arr->Length();
 		auto context = isolate_->GetCurrentContext();
-		for (TFieldIterator<UProperty> PropertyIt(Struct, EFieldIteratorFlags::IncludeSuper); PropertyIt && len; ++PropertyIt)
+		for (TFieldIterator<FProperty> PropertyIt(Struct, EFieldIteratorFlags::IncludeSuper); PropertyIt && len; ++PropertyIt)
 		{
 			auto Property = *PropertyIt;
 			auto PropertyName = PropertyNameToString(Property, !bIsEditor);
@@ -783,7 +797,7 @@ public:
 		}
 	}
 
-	void InternalWriteProperty(UProperty* Property, uint8* Buffer, Handle<Value> Value, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
+	void InternalWriteProperty(FProperty* Property, uint8* Buffer, Handle<Value> Value, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
 	{
 		FIsolateHelper I(isolate_);
 
@@ -799,7 +813,7 @@ public:
 		const FString& BitmaskEnumName = Property->GetMetaData(FJavascriptIsolateConstant::MD_BitmaskEnum);
 		if (!BitmaskEnumName.IsEmpty())
 		{
-			if (auto p = Cast<UNumericProperty>(Property))
+			if (auto p = CastField<FNumericProperty>(Property))
 			{
 				if (p->IsInteger())
 				{
@@ -821,27 +835,27 @@ public:
 #else
 		if (false) {}
 #endif
-		else if (auto p = Cast<UIntProperty>(Property))
+		else if (auto p = CastField<FIntProperty>(Property))
 		{
 			p->SetPropertyValue_InContainer(Buffer, Value->Int32Value(isolate_->GetCurrentContext()).ToChecked());
 		}
-		else if (auto p = Cast<UFloatProperty>(Property))
+		else if (auto p = CastField<FFloatProperty>(Property))
 		{
 			p->SetPropertyValue_InContainer(Buffer, Value->NumberValue(isolate_->GetCurrentContext()).ToChecked());
 		}
-		else if (auto p = Cast<UBoolProperty>(Property))
+		else if (auto p = CastField<FBoolProperty>(Property))
 		{
 			p->SetPropertyValue_InContainer(Buffer, Value->BooleanValue(isolate_));
 		}
-		else if (auto p = Cast<UNameProperty>(Property))
+		else if (auto p = CastField<FNameProperty>(Property))
 		{
 			p->SetPropertyValue_InContainer(Buffer, FName(*StringFromV8(isolate_, Value)));
 		}
-		else if (auto p = Cast<UStrProperty>(Property))
+		else if (auto p = CastField<FStrProperty>(Property))
 		{
 			p->SetPropertyValue_InContainer(Buffer, StringFromV8(isolate_, Value));
 		}
-		else if (auto p = Cast<UTextProperty>(Property))
+		else if (auto p = CastField<FTextProperty>(Property))
 		{
 			if (!Flags.Alternative)
 			{
@@ -869,7 +883,7 @@ public:
 					I.Throw(FString::Printf(TEXT("Needed JavascriptText struct data")));
 			}
 		}
-		else if (auto p = Cast<UClassProperty>(Property))
+		else if (auto p = CastField<FClassProperty>(Property))
 		{
 			if (Value->IsString())
 			{
@@ -901,7 +915,7 @@ public:
 				p->SetPropertyValue_InContainer(Buffer, UClassFromV8(isolate_, Value));
 			}
 		}
-		else if (auto p = Cast<UStructProperty>(Property))
+		else if (auto p = CastField<FStructProperty>(Property))
 		{
 			if (auto ScriptStruct = Cast<UScriptStruct>(p->Struct))
 			{
@@ -978,7 +992,7 @@ public:
 				I.Throw(FString::Printf(TEXT("No ScriptStruct found : %s"), *p->Struct->GetName()));
 			}
 		}
-		else if (auto p = Cast<UArrayProperty>(Property))
+		else if (auto p = CastField<FArrayProperty>(Property))
 		{
 			if (Value->IsArray())
 			{
@@ -1013,7 +1027,7 @@ public:
 				I.Throw(TEXT("Should write into array by passing an array instance"));
 			}
 		}
-		else if (auto p = Cast<UByteProperty>(Property))
+		else if (auto p = CastField<FByteProperty>(Property))
 		{
 			if (p->Enum)
 			{
@@ -1033,7 +1047,7 @@ public:
 				p->SetPropertyValue_InContainer(Buffer, Value->Int32Value(isolate_->GetCurrentContext()).ToChecked());
 			}
 		}
-		else if (auto p = Cast<UEnumProperty>(Property))
+		else if (auto p = CastField<FEnumProperty>(Property))
 		{
 			auto Str = StringFromV8(isolate_, Value);
 			auto EnumValue = p->GetEnum()->GetIndexByName(FName(*Str), EGetByNameFlags::None);
@@ -1047,11 +1061,11 @@ public:
 				p->GetUnderlyingProperty()->SetIntPropertyValue(PropData, (int64)EnumValue);
 			}
 		}
-		else if (auto p = Cast<UObjectPropertyBase>(Property))
+		else if (auto p = CastField<FObjectPropertyBase>(Property))
 		{
 			p->SetObjectPropertyValue_InContainer(Buffer, UObjectFromV8(isolate_->GetCurrentContext(), Value));
 		}
-		else if (auto p = Cast<USetProperty>(Property))
+		else if (auto p = CastField<FSetProperty>(Property))
 		{
 			if (Value->IsArray())
 			{
@@ -1076,7 +1090,7 @@ public:
 				SetHelper.Rehash();
 			}
 		}
-		else if (auto p = Cast<UMapProperty>(Property))
+		else if (auto p = CastField<FMapProperty>(Property))
 		{
 			if (Value->IsObject())
 			{
@@ -1187,7 +1201,7 @@ public:
 		{
 			info.GetReturnValue().Set(V8_String(info.GetIsolate(), IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead((const TCHAR *)L"."))); // FPaths::ProjectDir()
         };
-		global_templ->Set(I.Keyword("$cwd"), I.FunctionTemplate(fileManagerCwd));
+		global_templ->Set(I.Keyword("$cwd"), I.FunctionTemplate(FV8Exception::GuardLambda(fileManagerCwd)));
 
 #if WITH_EDITOR
 		auto exec_editor = [](const FunctionCallbackInfo<Value>& info)
@@ -1203,7 +1217,7 @@ public:
 				}
 			}
 		};
-		global_templ->Set(I.Keyword("$execEditor"), I.FunctionTemplate(exec_editor));
+		global_templ->Set(I.Keyword("$execEditor"), I.FunctionTemplate(FV8Exception::GuardLambda(exec_editor)));
 
 		auto exec_transaction = [](const FunctionCallbackInfo<Value>& info)
 		{
@@ -1220,7 +1234,7 @@ public:
 				}
 			}
 		};
-		global_templ->Set(I.Keyword("$execTransaction"), I.FunctionTemplate(exec_transaction));
+		global_templ->Set(I.Keyword("$execTransaction"), I.FunctionTemplate(FV8Exception::GuardLambda(exec_transaction)));
 
 		auto exec_profile = [](const FunctionCallbackInfo<Value>& info)
 		{
@@ -1250,21 +1264,36 @@ public:
 				}
 			}
 		};
-		global_templ->Set(I.Keyword("$profile"), I.FunctionTemplate(exec_profile));
+		global_templ->Set(I.Keyword("$profile"), I.FunctionTemplate(FV8Exception::GuardLambda(exec_profile)));
 #endif
 	}
+
+	template <typename T>
+	void BindFunction(FIsolateHelper I, Local<FunctionTemplate> Template, const char* name, T&& fn)
+	{
+		Template->PrototypeTemplate()->Set(I.Keyword(name), I.FunctionTemplate(FV8Exception::GuardLambda(fn)));
+	}
+
+	struct FunctionTemplateHelper
+	{
+		FIsolateHelper I;
+		Handle<FunctionTemplate> Template;
+
+		template <typename T>
+		void Set(const char* name, T&& fn)
+		{
+			Template->PrototypeTemplate()->Set(I.Keyword(name), I.FunctionTemplate(FV8Exception::GuardLambda(fn)));
+		}
+	};
 
 	void ExportMemory(Local<ObjectTemplate> global_templ)
 	{
 		FIsolateHelper I(isolate_);
 
 		Local<FunctionTemplate> Template = I.FunctionTemplate();
+		FunctionTemplateHelper FnHelper{ I, Template };
 
-		auto add_fn = [&](const char* name, FunctionCallback fn) {
-			Template->PrototypeTemplate()->Set(I.Keyword(name), I.FunctionTemplate(fn));
-		};
-
-		add_fn("access", [](const FunctionCallbackInfo<Value>& info)
+		FnHelper.Set("access", [](const FunctionCallbackInfo<Value>& info)
 		{
 			auto isolate = info.GetIsolate();
 
@@ -1287,7 +1316,7 @@ public:
 			I.Throw(TEXT("memory.fork requires JavascriptMemoryObject"));
 		});
 
-		add_fn("exec", [](const FunctionCallbackInfo<Value>& info)
+		FnHelper.Set("exec", [](const FunctionCallbackInfo<Value>& info)
 		{
 			auto isolate = info.GetIsolate();
 			FIsolateHelper I(isolate);
@@ -1314,7 +1343,7 @@ public:
 		});
 
 		// memory.bind
-		add_fn("bind", [](const FunctionCallbackInfo<Value>& info)
+		FnHelper.Set("bind", [](const FunctionCallbackInfo<Value>& info)
 		{
 			UE_LOG(Javascript, Warning, TEXT("memory.bind is deprecated. use memory.exec(ab,fn) instead."));
 			FIsolateHelper I(info.GetIsolate());
@@ -1334,7 +1363,7 @@ public:
 		});
 
 		// memory.unbind
-		add_fn("unbind", [](const FunctionCallbackInfo<Value>& info)
+		FnHelper.Set("unbind", [](const FunctionCallbackInfo<Value>& info)
 		{
 			FIsolateHelper I(info.GetIsolate());
 
@@ -1358,7 +1387,7 @@ public:
 		});
 
 		// console.void
-		add_fn("write", [](const FunctionCallbackInfo<Value>& info)
+		FnHelper.Set("write", [](const FunctionCallbackInfo<Value>& info)
 		{
 			auto isolate = info.GetIsolate();
 			FIsolateHelper I(isolate);
@@ -1390,7 +1419,7 @@ public:
 			info.GetReturnValue().Set(info.Holder());
 		});
 
-		add_fn("takeSnapshot", [](const FunctionCallbackInfo<Value>& info)
+		FnHelper.Set("takeSnapshot", [](const FunctionCallbackInfo<Value>& info)
 		{
 			auto isolate = info.GetIsolate();
 			FIsolateHelper I(isolate);
@@ -1466,7 +1495,7 @@ public:
 		int ArgIndex = 0;
 
 		// Intentionally declares iterator outside for-loop scope
-		TFieldIterator<UProperty> It(Function);
+		TFieldIterator<FProperty> It(Function);
 
 		int32 NumArgs = 0;
 
@@ -1497,10 +1526,13 @@ public:
 		FScopeCycleCounterUObject ContextScope(Object);
 		FScopeCycleCounterUObject FunctionScope(Function);
 
-		Object->ProcessEvent(Function, Buffer);
+		if (!Object->HasAnyFlags(RF_BeginDestroyed | RF_FinishDestroyed))
+		{
+			Object->ProcessEvent(Function, Buffer);
+		}
 
-		auto FetchProperty = [&](UProperty* Param, int32 ArgIndex) -> Local<Value> {
-			if (auto p = Cast<UStructProperty>(Param))
+		auto FetchProperty = [&](FProperty* Param, int32 ArgIndex) -> Local<Value> {
+			if (auto p = CastField<FStructProperty>(Param))
 			{
 				// Get argument from caller
 				auto arg = GetArg(ArgIndex);
@@ -1531,9 +1563,9 @@ public:
 
 			auto context = isolate->GetCurrentContext();
 			// Iterate over parameters again
-			for (TFieldIterator<UProperty> It(Function); It; ++It, ArgIndex++)
+			for (TFieldIterator<FProperty> It(Function); It; ++It, ArgIndex++)
 			{
-				UProperty* Param = *It;
+				FProperty* Param = *It;
 
 				auto PropertyFlags = Param->GetPropertyFlags();
 
@@ -1578,7 +1610,7 @@ public:
 			// Iterate to fill out return parameter (if we have one)
 			for (; It; ++It)
 			{
-				UProperty* Param = *It;
+				FProperty* Param = *It;
 				if (Param->GetPropertyFlags() & CPF_ReturnParm)
 				{
 					return handle_scope.Escape(FetchProperty(Param, NumArgs));
@@ -1599,7 +1631,7 @@ public:
 		{
 			auto isolate = info.GetIsolate();
 
-			FIsolateHelper I(isolate);
+			//FIsolateHelper I(isolate);
 
 			auto self = info.Holder();
 
@@ -1612,7 +1644,7 @@ public:
 			// Check 'this' is valid
 			if (!IsValid(Object))
 			{
-				I.Throw(FString::Printf(TEXT("Invalid instance for calling a function %s"), *Function->GetName()));
+				//I.Throw(FString::Printf(TEXT("Invalid instance for calling a function %s"), *Function->GetName()));
 				return;
 			}
 
@@ -1634,7 +1666,7 @@ public:
 		};
 
 		auto function_name = I.Keyword(FunctionToExport->GetName());
-		auto function = I.FunctionTemplate(FunctionBody, FunctionToExport);
+		auto function = I.FunctionTemplate(FV8Exception::GuardLambda(FunctionBody), FunctionToExport);
 
 		// In case of static function, you can also call this function by 'Class.Method()'.
 		if (FunctionToExport->FunctionFlags & FUNC_Static)
@@ -1685,7 +1717,7 @@ public:
 		};
 
 		auto function_name = I.Keyword(FunctionToExport->GetName());
-		auto function = I.FunctionTemplate(FunctionBody, FunctionToExport);
+		auto function = I.FunctionTemplate(FV8Exception::GuardLambda(FunctionBody), FunctionToExport);
 
 		// Register the function to prototype template
 		Template->PrototypeTemplate()->Set(function_name, function);
@@ -1726,7 +1758,7 @@ public:
 		};
 
 		auto function_name = I.Keyword(FunctionToExport->GetName());
-		auto function = I.FunctionTemplate(FunctionBody, FunctionToExport);
+		auto function = I.FunctionTemplate(FV8Exception::GuardLambda(FunctionBody), FunctionToExport);
 
 		// Register the function to prototype template
 		Template->Set(function_name, function);
@@ -1751,8 +1783,28 @@ public:
 		ExportStruct(StructToExport);
 	}
 
+	virtual int IsExcludeGCUClassTarget(UClass* TargetUClass) override
+	{
+		UClass* Class = TargetUClass;
+
+		if (!::IsValid(Class) || !Class->IsValidLowLevel())
+		{
+			return 0;
+		}
+
+		if (::IsValid(Class->ClassGeneratedBy) && Class->ClassGeneratedBy->IsValidLowLevelFast())
+		{
+			if (Cast<UBlueprint>(Class->ClassGeneratedBy)->BlueprintType == EBlueprintType::BPTYPE_LevelScript)
+			{
+				return 0;
+			}
+		}
+
+		return INDEX_NONE;
+	}
+
 	template <typename PropertyAccessors>
-	void ExportProperty(Handle<FunctionTemplate> Template, UProperty* PropertyToExport, int32 PropertyIndex)
+	void ExportProperty(Handle<FunctionTemplate> Template, FProperty* PropertyToExport, int32 PropertyIndex)
 	{
 		FIsolateHelper I(isolate_);
 
@@ -1765,7 +1817,7 @@ public:
 
 			auto Flags = FPropertyAccessorFlags();
 			Flags.Alternative = StringFromV8(isolate, property)[0] == '$';
-			auto Property = reinterpret_cast<UProperty*>((Local<External>::Cast(data))->Value());
+			auto Property = reinterpret_cast<FProperty*>((Local<External>::Cast(data))->Value());
 			info.GetReturnValue().Set(PropertyAccessors::Get(isolate, info.This(), Property, Flags));
 		};
 
@@ -1778,7 +1830,7 @@ public:
 
 			auto Flags = FPropertyAccessorFlags();
 			Flags.Alternative = StringFromV8(isolate, property)[0] == '$';
-			auto Property = reinterpret_cast<UProperty*>((Local<External>::Cast(data))->Value());
+			auto Property = reinterpret_cast<FProperty*>((Local<External>::Cast(data))->Value());
 			PropertyAccessors::Set(isolate, info.This(), Property, value, Flags);
 		};
 
@@ -1845,7 +1897,7 @@ public:
 			info.GetReturnValue().Set(GetSelf(isolate)->ForceExportObject(ClassToExport));
 		};
 
-		Template->Set(I.Keyword("GetClassObject"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("GetClassObject"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	void AddMemberFunction_Class_SetDefaultSubobjectClass(Local<FunctionTemplate> Template, UStruct* ClassToExport)
@@ -1883,12 +1935,10 @@ public:
 
 			auto Context = Class->JavascriptContext.Pin();
 			auto Name = StringFromV8(isolate, info[0]);
-			PlaceholderUClass = ClassToExport;
-			ObjectInitializer->SetDefaultSubobjectClass<hack_private_key>(*Name);
-			PlaceholderUClass = nullptr;
+			ObjectInitializer->SetDefaultSubobjectClass(*Name, ClassToExport);
 		};
 
-		Template->Set(I.Keyword("SetDefaultSubobjectClass"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("SetDefaultSubobjectClass"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	void AddMemberFunction_Class_CreateDefaultSubobject(Local<FunctionTemplate> Template, UStruct* ClassToExport)
@@ -1938,7 +1988,7 @@ public:
 			info.GetReturnValue().Set(Context->ExportObject(Object));
 		};
 
-		Template->Set(I.Keyword("CreateDefaultSubobject"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("CreateDefaultSubobject"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	void AddMemberFunction_Class_GetDefaultSubobjectByName(Local<FunctionTemplate> Template, UStruct* ClassToExport)
@@ -1955,7 +2005,7 @@ public:
 			info.GetReturnValue().Set(GetSelf(isolate)->ExportObject(ClassToExport->GetDefaultSubobjectByName(*Name)));
 		};
 
-		Template->Set(I.Keyword("GetDefaultSubobjectByName"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("GetDefaultSubobjectByName"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	void AddMemberFunction_Class_GetDefaultObject(Local<FunctionTemplate> Template, UStruct* ClassToExport)
@@ -1970,7 +2020,7 @@ public:
 			info.GetReturnValue().Set(GetSelf(isolate)->ExportObject(ClassToExport->GetDefaultObject()));
 		};
 
-		Template->Set(I.Keyword("GetDefaultObject"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("GetDefaultObject"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	void AddMemberFunction_Class_Find(Local<FunctionTemplate> Template, UClass* ClassToExport)
@@ -1997,7 +2047,7 @@ public:
 			}
 		};
 
-		Template->Set(I.Keyword("Find"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("Find"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	void AddMemberFunction_Class_Load(Local<FunctionTemplate> Template, UClass* ClassToExport)
@@ -2023,7 +2073,7 @@ public:
 			}
 		};
 
-		Template->Set(I.Keyword("Load"), I.FunctionTemplate(fn, ClassToExport));
+		Template->Set(I.Keyword("Load"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	Local<Value> C_Operator(UStruct* StructToExport, Local<Value> Value)
@@ -2070,7 +2120,7 @@ public:
 			}
 		};
 
-		Template->Set(I.Keyword("C"), I.FunctionTemplate(fn, StructToExport));
+		Template->Set(I.Keyword("C"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), StructToExport));
 	}
 
 	void AddMemberFunction_JavascriptRef_get(Local<FunctionTemplate> Template)
@@ -2102,7 +2152,7 @@ public:
 			}
 		};
 
-		Template->PrototypeTemplate()->Set(I.Keyword("get"), I.FunctionTemplate(fn, nullptr));
+		Template->PrototypeTemplate()->Set(I.Keyword("get"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), nullptr));
 	}
 
 	void AddMemberFunction_Struct_clone(Local<FunctionTemplate> Template, UStruct* StructToExport)
@@ -2125,7 +2175,7 @@ public:
 			}
 		};
 
-		Template->PrototypeTemplate()->Set(I.Keyword("clone"), I.FunctionTemplate(fn, StructToExport));
+		Template->PrototypeTemplate()->Set(I.Keyword("clone"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), StructToExport));
 	}
 
 	template <typename PropertyAccessor>
@@ -2158,7 +2208,7 @@ public:
 				};
 				auto context = isolate->GetCurrentContext();
 
-				for (TFieldIterator<UProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
+				for (TFieldIterator<FProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
 				{
 					auto Property = *PropertyIt;
 
@@ -2168,7 +2218,7 @@ public:
 
 						auto name = I.Keyword(PropertyName);
 						auto value = PropertyAccessor::Get(isolate, self, Property);
-						if (auto p = Cast<UClassProperty>(Property))
+						if (auto p = CastField<FClassProperty>(Property))
 						{
 							auto Class = UClassFromV8(isolate, value);
 
@@ -2192,13 +2242,13 @@ public:
 
 							(void)out->Set(context, name, value);
 						}
-						else if (auto p = Cast<UObjectPropertyBase>(Property))
+						else if (auto p = CastField<FObjectPropertyBase>(Property))
 						{
 							(void)out->Set(context, name, Object_toJSON(value));
 						}
-						else if (auto p = Cast<UArrayProperty>(Property))
+						else if (auto p = CastField<FArrayProperty>(Property))
 						{
-							if (auto q = Cast<UObjectPropertyBase>(p->Inner))
+							if (auto q = CastField<FObjectPropertyBase>(p->Inner))
 							{
 								auto arr = Handle<Array>::Cast(value);
 								auto len = arr->Length();
@@ -2229,7 +2279,7 @@ public:
 
 				info.GetReturnValue().Set(out);
 			};
-			Template->PrototypeTemplate()->Set(I.Keyword("toJSON"), I.FunctionTemplate(fn, ClassToExport));
+			Template->PrototypeTemplate()->Set(I.Keyword("toJSON"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 		}
 		else
 		{
@@ -2257,7 +2307,7 @@ public:
 
 				auto context = isolate->GetCurrentContext();
 
-				for (TFieldIterator<UProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
+				for (TFieldIterator<FProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
 				{
 					auto Property = *PropertyIt;
 
@@ -2267,7 +2317,7 @@ public:
 
 						auto name = I.Keyword(PropertyName);
 						auto value = PropertyAccessor::Get(isolate, self, Property);
-						if (auto p = Cast<UClassProperty>(Property))
+						if (auto p = CastField<FClassProperty>(Property))
 						{
 							auto Class = UClassFromV8(isolate, value);
 
@@ -2291,13 +2341,13 @@ public:
 
 							(void)out->Set(context, name, value);
 						}
-						else if (auto p = Cast<UObjectPropertyBase>(Property))
+						else if (auto p = CastField<FObjectPropertyBase>(Property))
 						{
 							(void)out->Set(context, name, Object_toJSON(value));
 						}
-						else if (auto p = Cast<UArrayProperty>(Property))
+						else if (auto p = CastField<FArrayProperty>(Property))
 						{
-							if (auto q = Cast<UObjectPropertyBase>(p->Inner))
+							if (auto q = CastField<FObjectPropertyBase>(p->Inner))
 							{
 								auto arr = Handle<Array>::Cast(value);
 								auto len = arr->Length();
@@ -2328,7 +2378,7 @@ public:
 
 				info.GetReturnValue().Set(out);
 			};
-			Template->PrototypeTemplate()->Set(I.Keyword("toJSON"), I.FunctionTemplate(fn, ClassToExport));
+			Template->PrototypeTemplate()->Set(I.Keyword("toJSON"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 		}
 
 	}
@@ -2354,11 +2404,11 @@ public:
 			auto self = info.This();
 			auto Context = Context::New(isolate);
 			auto Instance = PropertyAccessor::This(Context, self);
-			for (TFieldIterator<UProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
+			for (TFieldIterator<FProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
 			{
 				auto Property = *PropertyIt;
 
-				if (auto p = Cast<UArrayProperty>(Property))
+				if (auto p = CastField<FArrayProperty>(Property))
 				{
 					FScriptArrayHelper_InContainer helper(p, Instance);
 
@@ -2376,11 +2426,11 @@ public:
 			}
 		};
 
-		Template->PrototypeTemplate()->Set(I.Keyword("$memaccess"), I.FunctionTemplate(fn, ClassToExport));
+		Template->PrototypeTemplate()->Set(I.Keyword("$memaccess"), I.FunctionTemplate(FV8Exception::GuardLambda(fn), ClassToExport));
 	}
 
 	template <typename PropertyAccessor>
-	void AddMemberFunction_GetStructRefArray(Handle<FunctionTemplate> Template, UProperty* PropertyToExport)
+	void AddMemberFunction_GetStructRefArray(Handle<FunctionTemplate> Template, FProperty* PropertyToExport)
 	{
 		auto fn = [](const FunctionCallbackInfo<Value>& info)
 		{
@@ -2391,7 +2441,7 @@ public:
 			auto Context = Context::New(isolate);
 			auto Instance = PropertyAccessor::This(Context, self);
 
-			auto PropertyToExport = reinterpret_cast<UProperty*>((Local<External>::Cast(info.Data()))->Value());
+			auto PropertyToExport = reinterpret_cast<FProperty*>((Local<External>::Cast(info.Data()))->Value());
 
 			// Depends on alternative implementation of InternalReadProperty for UArrayProperty containing UStructProperty.
 			auto Flags = FPropertyAccessorFlags();
@@ -2402,7 +2452,7 @@ public:
 
 		FIsolateHelper I(isolate_);
 		FString StructRefArrayAccessorName = FString::Printf(TEXT("$getStructRefArray_%s"), *PropertyToExport->GetName());
-		Template->PrototypeTemplate()->Set(I.Keyword(StructRefArrayAccessorName), I.FunctionTemplate(fn, PropertyToExport));
+		Template->PrototypeTemplate()->Set(I.Keyword(StructRefArrayAccessorName), I.FunctionTemplate(FV8Exception::GuardLambda(fn), PropertyToExport));
 	}
 
 	Local<FunctionTemplate> InternalExportUClass(UClass* ClassToExport)
@@ -2608,9 +2658,9 @@ public:
 		}
 
 		int32 PropertyIndex = 0;
-		for (TFieldIterator<UProperty> PropertyIt(ClassToExport, EFieldIteratorFlags::ExcludeSuper); PropertyIt; ++PropertyIt, ++PropertyIndex)
+		for (TFieldIterator<FProperty> PropertyIt(ClassToExport, EFieldIteratorFlags::ExcludeSuper); PropertyIt; ++PropertyIt, ++PropertyIndex)
 		{
-			UProperty* Property = *PropertyIt;
+			FProperty* Property = *PropertyIt;
 			if (FV8Config::CanExportProperty(ClassToExport, Property))
 			{
 				ExportProperty<FObjectPropertyAccessors>(Template, Property, PropertyIndex);
@@ -2681,9 +2731,9 @@ public:
 		Template->Set(static_class, I.External(StructToExport));
 
 		int32 PropertyIndex = 0;
-		for (TFieldIterator<UProperty> PropertyIt(StructToExport, EFieldIteratorFlags::ExcludeSuper); PropertyIt; ++PropertyIt, ++PropertyIndex)
+		for (TFieldIterator<FProperty> PropertyIt(StructToExport, EFieldIteratorFlags::ExcludeSuper); PropertyIt; ++PropertyIt, ++PropertyIndex)
 		{
-			UProperty* Property = *PropertyIt;
+			FProperty* Property = *PropertyIt;
 			if (FV8Config::CanExportProperty(StructToExport, Property))
 			{
 				ExportProperty<FStructPropertyAccessors>(Template, Property, PropertyIndex);
@@ -2796,7 +2846,8 @@ public:
 	Local<Value> ForceExportObject(UObject* Object)
 	{
 		FIsolateHelper I(isolate_);
-		if (!Object)
+
+		if (!(::IsValid(Object)) || !Object->IsValidLowLevelFast())
 		{
 			return v8::Undefined(isolate_);
 		}
@@ -2831,13 +2882,14 @@ public:
 		if (bForce) return ForceExportObject(Object);
 
 		FIsolateHelper I(isolate_);
-		if (!Object)
+
+		auto Context = GetContext();
+		if (!Context)
 		{
 			return v8::Undefined(isolate_);
 		}
 
-		auto Context = GetContext();
-		if (!Context)
+		if (!(::IsValid(Object)) || !Object->IsValidLowLevelFast())
 		{
 			return v8::Undefined(isolate_);
 		}
@@ -2881,10 +2933,6 @@ public:
 			else
 			{
 				auto Class = Object->GetClass();
-				//if (Class->ClassGeneratedBy && Cast<ULevel>(Class->ClassGeneratedBy->GetOuter()))
-				//{
-				//	return Undefined(isolate_);
-				//}
 
 				auto v8_class = ExportUClass(Class);
 				auto arg = I.External(Object);
@@ -2985,7 +3033,9 @@ public:
 
 	void RegisterObject(UObject* UnrealObject, Local<Value> value)
 	{
-		auto& result = GetContext()->ObjectToObjectMap.Add(UnrealObject, UniquePersistent<Value>(isolate_, value));
+		FJavascriptContext* JavaContextPtr = GetContext();
+
+		auto& result = JavaContextPtr->ObjectToObjectMap.Add(UnrealObject, UniquePersistent<Value>(isolate_, value));
 		SetWeak(result, UnrealObject);
 	}
 
@@ -3032,12 +3082,12 @@ FJavascriptIsolate* FJavascriptIsolate::Create(bool bIsEditor)
 	return new FJavascriptIsolateImplementation(bIsEditor);
 }
 
-Local<Value> FJavascriptIsolate::ReadProperty(Isolate* isolate, UProperty* Property, uint8* Buffer, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
+Local<Value> FJavascriptIsolate::ReadProperty(Isolate* isolate, FProperty* Property, uint8* Buffer, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
 {
 	return FJavascriptIsolateImplementation::GetSelf(isolate)->InternalReadProperty(Property, Buffer, Owner, Flags);
 }
 
-void FJavascriptIsolate::WriteProperty(Isolate* isolate, UProperty* Property, uint8* Buffer, Handle<Value> Value, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
+void FJavascriptIsolate::WriteProperty(Isolate* isolate, FProperty* Property, uint8* Buffer, Handle<Value> Value, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
 {
 	FJavascriptIsolateImplementation::GetSelf(isolate)->InternalWriteProperty(Property, Buffer, Value, Owner, Flags);
 }
@@ -3081,12 +3131,12 @@ bool TStructReader<CppType>::Read(Isolate* isolate, Local<Value> Value, CppType&
 
 namespace v8
 {
-	Local<Value> ReadProperty(Isolate* isolate, UProperty* Property, uint8* Buffer, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
+	Local<Value> ReadProperty(Isolate* isolate, FProperty* Property, uint8* Buffer, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
 	{
 		return FJavascriptIsolate::ReadProperty(isolate, Property, Buffer, Owner, Flags);
 	}
 
-	void WriteProperty(Isolate* isolate, UProperty* Property, uint8* Buffer, Local<Value> Value, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
+	void WriteProperty(Isolate* isolate, FProperty* Property, uint8* Buffer, Local<Value> Value, const IPropertyOwner& Owner, const FPropertyAccessorFlags& Flags)
 	{
 		FJavascriptIsolate::WriteProperty(isolate, Property, Buffer, Value, Owner, Flags);
 	}

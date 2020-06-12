@@ -22,5 +22,5 @@ void UJavascriptTextBlock::SynchronizeProperties()
 
 	MyTextBlock->SetHighlightText(HighlightTextBinding);
 	//@hack: OnGenerateRowEvent등의 Non-userwidget slate를 받는 패턴에서, &this.StrikeBrush를 ptr로 넘기기 때문에 widget-slate 의존성 생김. 임시로 disabled.
-	//MyTextBlock->SetStrikeBrush(TAttribute<const FSlateBrush*>());
+	MyTextBlock->SetStrikeBrush(TAttribute<const FSlateBrush*>());
 }

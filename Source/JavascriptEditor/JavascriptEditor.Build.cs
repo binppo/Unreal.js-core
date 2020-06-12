@@ -1,4 +1,4 @@
-using UnrealBuildTool;
+﻿using UnrealBuildTool;
 
 public class JavascriptEditor : ModuleRules
 {
@@ -40,8 +40,8 @@ public class JavascriptEditor : ModuleRules
                     "KismetWidgets",
                     "EditorStyle",
                     "UnrealEd",
-                    "JavascriptUMG"
-
+                    "JavascriptUMG",
+                    "DetailCustomizations"
                 }
             );	// @todo Mac: for some reason CoreUObject and Engine are needed to link in debug on Mac
 
@@ -89,8 +89,10 @@ public class JavascriptEditor : ModuleRules
                         "ImageWrapper",
                         "RenderCore",
                         "RHI",
-				        "DesktopPlatform"/*,
-                        "ToolMenus"*/
+				        "DesktopPlatform",
+                        "ToolMenus",
+                        "SkeletalMeshEditor",
+                        "StaticMeshEditor"
                     }
             );
         }
